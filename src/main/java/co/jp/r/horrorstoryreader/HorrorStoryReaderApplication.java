@@ -101,7 +101,7 @@ public class HorrorStoryReaderApplication implements CommandLineRunner {
             // VCにJoinしていなければ朗読はしない。
             if (!isSelfJoinVc(e.getMember().orElse(null))) return;
 
-            if ("怖い話が聞きたいです".contains(message.getData().content())) {
+            if ("お話を聞かせてください".contains(message.getData().content())) {
                 playerManager.loadItem("", scheduler);
             }
         });
