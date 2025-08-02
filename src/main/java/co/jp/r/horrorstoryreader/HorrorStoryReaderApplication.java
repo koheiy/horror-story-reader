@@ -20,6 +20,10 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.util.StringUtils;
 
+import java.io.StringReader;
+import java.util.function.Consumer;
+import java.util.random.RandomGenerator;
+
 @SpringBootApplication
 public class HorrorStoryReaderApplication implements CommandLineRunner {
 
@@ -28,18 +32,26 @@ public class HorrorStoryReaderApplication implements CommandLineRunner {
 
     private AudioPlayerManager playerManager;
     private AudioPlayer player;
-    private AudioProvider provider;
+    private LavaPlayerAudioProvider provider;
     private TrackScheduler scheduler;
+    private HorrorStories horrorStories;
 
     private final DiscordClient client;
     private final GatewayDiscordClient gateway;
     
     private Snowflake selfId;
+
+    private final String wavDirectory;
     
-    public HorrorStoryReaderApplication(@Value("${discord.token}") final String token) {
+    public HorrorStoryReaderApplication(
+            @Value("${discord.token}") final String token,
+            @Value("${wav-directory}") final String wavDirectory,
+            final HorrorStories horrorStories) {
         this.token = token;
         this.client = DiscordClient.create(token);
         this.gateway = client.login().block();
+        this.wavDirectory = wavDirectory;
+        this.horrorStories = horrorStories;
     }
 
     public static void main(String[] args) {
@@ -55,13 +67,14 @@ public class HorrorStoryReaderApplication implements CommandLineRunner {
         gateway.on(MessageCreateEvent.class).subscribe(e -> {
             final Message message = e.getMessage();
             if (message.getAuthor().get().isBot()) return;
-            if ("お帰りください".contains(message.getData().content())) {
+            if ("お帰りください".equals(message.getData().content())) {
                 final Member member = e.getMember().orElse(null);
                 if (member != null) {
                     final VoiceState voiceState = member.getVoiceState().block();
                     if (voiceState != null) {
                         final VoiceChannel channel = voiceState.getChannel().block();
                         if (channel != null) {
+                            stopAudioPlayer();
                             channel.sendDisconnectVoiceState().block();
                         }
                     }
@@ -74,22 +87,60 @@ public class HorrorStoryReaderApplication implements CommandLineRunner {
             final Message message = e.getMessage();
             // あとでなおす
             if (message.getAuthor().get().isBot()) return;
-            if ("怖い話が聞きたいです".contains(message.getData().content())) {
+            if ("怖い話が聞きたいです".equals(message.getData().content())) {
                 final Member member = e.getMember().orElse(null);
                 if (member != null) {
                     final VoiceState voiceState = member.getVoiceState().block();
                     if (voiceState != null) {
                         final VoiceChannel channel = voiceState.getChannel().block();
                         if (channel != null) {
+
                             channel.join(spec -> {
                                 spec.setProvider(provider);
                             }).block();
+                            stopAudioPlayer();
                         }
                     }
                 }
             }
         });
 
+
+        // 停止
+        gateway.on(MessageCreateEvent.class).subscribe(e -> {
+            final Message message = e.getMessage();
+            if (message.getAuthor().get().isBot()) return;
+            if ("止めてください".equals(message.getData().content())) {
+                final Member member = e.getMember().orElse(null);
+                if (member != null) {
+                    final VoiceState voiceState = member.getVoiceState().block();
+                    if (voiceState != null) {
+                        final VoiceChannel channel = voiceState.getChannel().block();
+                        if (channel != null) {
+                            pauseAudioPlayer();
+                        }
+                    }
+                }
+            }
+        });
+
+        // 再開
+        gateway.on(MessageCreateEvent.class).subscribe(e -> {
+            final Message message = e.getMessage();
+            if (message.getAuthor().get().isBot()) return;
+            if ("再開してください".equals(message.getData().content())) {
+                final Member member = e.getMember().orElse(null);
+                if (member != null) {
+                    final VoiceState voiceState = member.getVoiceState().block();
+                    if (voiceState != null) {
+                        final VoiceChannel channel = voiceState.getChannel().block();
+                        if (channel != null) {
+                            resumeAudioPlayer();
+                        }
+                    }
+                }
+            }
+        });
 
         // 朗読イベント
         gateway.on(MessageCreateEvent.class).subscribe(e -> {
@@ -101,14 +152,18 @@ public class HorrorStoryReaderApplication implements CommandLineRunner {
             // VCにJoinしていなければ朗読はしない。
             if (!isSelfJoinVc(e.getMember().orElse(null))) return;
 
-            if ("お話を聞かせてください".contains(message.getData().content())) {
-                playerManager.loadItem("", scheduler);
+            if ("お話を聞かせてください".equals(message.getData().content())) {
+                // ちゃんとサイクル管理すること
+                String horrorStoryAudioPath = this.wavDirectory + horrorStories.getStories().get(RandomGenerator.getDefault().nextInt(horrorStories.getStories().size()));
+                System.out.println(horrorStoryAudioPath);
+                playerManager.loadItem(horrorStoryAudioPath, scheduler);
             }
         });
 
         gateway.onDisconnect().block();
     }
 
+    // メソッド名が意味不明
     private boolean isSelfJoinVc(final Member member) {
         if (member != null) {
             final VoiceState voiceState = member.getVoiceState().block();
@@ -120,6 +175,18 @@ public class HorrorStoryReaderApplication implements CommandLineRunner {
             }
         }
         return false;
+    }
+
+    private void stopAudioPlayer() {
+        player.stopTrack();
+    }
+
+    private void pauseAudioPlayer() {
+        player.setPaused(true);
+    }
+
+    private void resumeAudioPlayer() {
+        player.setPaused(false);
     }
 
     private boolean containsForbiddenCharacters(final String src) {
